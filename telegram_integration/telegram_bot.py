@@ -27,14 +27,11 @@ from habits.models import Habit
 from celery.schedules import crontab
 from telegram_integration.tasks import delete_reminder_task
 from users.models import User
-from telegram_integration.tasks import send_reminder
 
-# --- Константы ---
-
-# Состояния для обработчиков диалогов
 REGISTER_USERNAME = 0
 REGISTER_EMAIL = 1
 REGISTER_PASSWORD = 2
+
 ADD_HABIT_NAME = 0
 ADD_HABIT_PLACE = 1
 ADD_HABIT_TIME = 2
@@ -45,126 +42,77 @@ ADD_HABIT_REWARD = 6
 ADD_HABIT_EXECUTION_TIME = 7
 ADD_HABIT_FREQUENCY = 8
 ADD_HABIT_PUBLIC = 9
+
 REMOVE_HABIT_NUMBER = 0
+
 EDIT_HABIT_NUMBER = 0
 EDIT_HABIT_FIELD = 1
 EDIT_HABIT_NEW_VALUE = 2
 
-# API endpoint для регистрации
-API_REGISTER_URL = 'http://127.0.0.1:8000/api/register/'
-
-# --- Настройка Celery ---
-
+# Настройка Celery
 celery = Celery('tasks', broker='redis://localhost:6379/0')
 
-# --- Настройка логгирования ---
-
+# Логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Инициализация бота ---
-
+# Инициализация бота
 TOKEN = '7012383716:AAET2suh8TMeg3yaNqa6LxTz3tCaGPIWzYA'
 bot = Bot(token=TOKEN)
 
-
-# --- Вспомогательные функции ---
-
-async def get_or_create_user(update: Update, context: CallbackContext):
-    """Получает пользователя из базы данных или создает нового."""
-    chat_id = update.effective_chat.id
-    try:
-        user = await sync_to_async(User.objects.get)(telegram_chat_id=chat_id)
-    except ObjectDoesNotExist:
-        user = await sync_to_async(User.objects.create)(telegram_chat_id=chat_id)
-    return user
-
-
-async def show_menu(update: Update, context: CallbackContext) -> None:
-    """Показывает главное меню с доступными командами."""
-    keyboard = [
-        [InlineKeyboardButton("Добавить привычку", callback_data='add_habit')],
-        [InlineKeyboardButton("Список привычек", callback_data='list_habits')],
-        [InlineKeyboardButton("Удалить привычку", callback_data='remove_habit')],
-        [InlineKeyboardButton("Редактировать привычку", callback_data='edit_habit')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-
-async def handle_menu_selection(update: Update, context: CallbackContext) -> None:
-    """Обрабатывает выбор пункта меню и вызывает соответствующие функции."""
-    query = update.callback_query
-    await query.answer()
-
-    # Получаем пользователя по telegram_chat_id
-    telegram_chat_id = query.from_user.id
-    print(f"Query: {query}")
-    print(f"Query data: {query.data}")
-    print(f"User: {query.from_user}")
-    print(f"User ID: {query.from_user.id}")
-    print(f"Update: {update}")
-    user = await sync_to_async(User.objects.get)(telegram_chat_id=telegram_chat_id)
-
-    selected_action = query.data
-
-    if selected_action == 'add_habit':
-        await add_habit_start(update, context)
-    elif selected_action == 'list_habits':
-        await list_habits(update, context)
-    elif selected_action == 'remove_habit':
-        await remove_habit_start(update, context)
-    elif selected_action == 'edit_habit':
-        await edit_habit_start(update, context)
-
-    # После выполнения действия снова отображаем меню
-    await show_menu(update, context)
-
-
-async def send_reminder_message(user: User, habit: Habit):
-    """Отправляет напоминание пользователю."""
-    await sync_to_async(send_reminder.delay)(user.telegram_chat_id,
-                                             f"Напоминание о привычке: {habit.action} в {habit.time} в {habit.place}.")
-
-
-async def delete_reminder_task(habit_id: int):
-    """Удаляет задачу Celery для указанной привычки."""
-    await sync_to_async(delete_reminder_task.delay)(f'reminder-{habit_id}')
-
-
-async def create_habit_reminder_task(user: User, habit: Habit):
-    """Создает задачу Celery для напоминания пользователю о его привычке."""
-    schedule = {
-        'task': 'telegram_integration.tasks.send_reminder',
-        'schedule': crontab(minute=habit.time.minute, hour=habit.time.hour,
-                            day_of_week='*', day_of_month='*', month_of_year='*'),
-        'args': (user.telegram_chat_id,
-                 f"Напоминание о привычке: {habit.action} в {habit.time} в {habit.place}."),
-    }
-    await sync_to_async(celery.conf.beat_schedule.update)({f'reminder-{habit.id}': schedule})
-    await sync_to_async(celery.conf.beat_schedule.apply_async)()
+# API endpoint для регистрации
+API_REGISTER_URL = 'http://127.0.0.1:8000/api/register/'
 
 
 # --- Обработчики команд ---
 
 async def start(update: Update, context: CallbackContext) -> None:
-    """Отправляет сообщение, когда команда /start выполнена."""
-    user = await get_or_create_user(update, context)
-    if user.username:
+    """Отправьте сообщение, когда будет выпущена команда /старт."""
+    user_id = update.effective_user.id
+    chat_id = update.message.chat_id
+
+    try:
+        # получить пользователя по ID чата
+        user = await sync_to_async(User.objects.get)(telegram_chat_id=chat_id)
         await update.message.reply_text(f'Привет! {user.username}, вы уже зарегистрированы.')
         await show_menu(update, context)
-    else:
+    except ObjectDoesNotExist:
+        # Если пользователя не существует, запишите ID чата в базу данных
         await update.message.reply_text(f'Привет! Зарегистрируйтесь, используя команду /register.')
 
 
+# --- Функция для отправки напоминаний ---
+
+@celery.task
+def send_reminder(chat_id: int, message: str) -> None:
+    """Отправьте сообщение напоминания на указанный идентификатор чата."""
+    bot.send_message(chat_id=chat_id, text=message)
+
+
+@celery.task
+def delete_reminder_task(task_id: str) -> None:
+    """Удаляет задачу Celery по её ID."""
+    celery.conf.beat_schedule.pop(task_id, None)
+    celery.conf.beat_schedule.apply_async()
+
+
+# --- Функция для обработки сообщений ---
+
+async def echo(update: Update, context: CallbackContext) -> None:
+    """Повторите сообщение пользователя."""
+    await update.message.reply_text(update.message.text)
+
+
+# --- Регистрация пользователя через Telegram ---
+
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает диалог регистрации."""
+    """Начните регистрационный разговор."""
     await update.message.reply_text('Введите желаемый username:')
     return REGISTER_USERNAME
 
 
 async def register_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод имени пользователя."""
+    """Обрабатывать ввод имени пользователя."""
     username = update.message.text
     context.user_data['username'] = username
     await update.message.reply_text('Введите email:')
@@ -172,7 +120,7 @@ async def register_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def register_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод email."""
+    """Обрабатывать ввод электронной почты."""
     email = update.message.text
     context.user_data['email'] = email
     await update.message.reply_text('Введите пароль:')
@@ -180,47 +128,67 @@ async def register_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод пароля и пытается зарегистрировать пользователя."""
+    """Обрабатывать ввод пароля и регистрацию попыток."""
     password = update.message.text
     context.user_data['password'] = password
 
-    # Отправка запроса на API
+    # --- Отправка запроса на API ---
+
     data = {
         'username': context.user_data['username'],
         'email': context.user_data['email'],
         'password': context.user_data['password'],
+        'telegram_chat_id': update.message.chat_id
     }
 
     response = requests.post(API_REGISTER_URL, data=json.dumps(data), headers={'Content-Type': 'application/json'})
+    # --- Обработка ответа API ---
 
-    # Обработка ответа API
     if response.status_code == 201:
+        # Получите ID пользователя из ответа API
         user_id = response.json().get('id')
+
         if user_id:
+            # Сохраните telegram_chat_id только после успешной регистрации
             user = await sync_to_async(User.objects.get)(id=user_id)
-            # Сохраняем telegram_chat_id
             user.telegram_chat_id = update.message.chat_id
             await sync_to_async(user.save)()
-            await update.message.reply_text('Регистрация прошла успешно!')
+
+            await update.message.reply_text(
+                'Регистрация прошла успешно! Теперь вы можете использовать бота.')
+            await show_menu(update, context)
         else:
             await update.message.reply_text(
                 'Ошибка регистрации. Не удалось получить ID пользователя.')
+    elif response.status_code == 400 and 'username' in response.json():
+        await update.message.reply_text('Такое имя пользователя уже существует. Пожалуйста, выберите другое.')
+        return await register_start(update, context)
+    elif response.status_code == 400 and 'email' in response.json():
+        await update.message.reply_text('Такой адрес электронной почты уже используется. Пожалуйста, введите другой.')
+        return await register_start(update, context)
+    else:
+        error_message = f"Ошибка регистрации: {response.text}"
+        await update.message.reply_text(error_message[:4000])
+
+    return ConversationHandler.END
 
 
-# --- Управление привычками ---
+# --- Добавление привычки ---
 
 async def add_habit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает диалог добавления привычки."""
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
-        return ConversationHandler.END
-    await update.message.reply_text('Введите название привычки:')
-    return ADD_HABIT_NAME
+    """Начинаем диалог добавления привычки"""
+    if update.callback_query:
+        await update.callback_query.message.reply_text('Введите название привычки:')
+        return ADD_HABIT_NAME
+    elif update.message:
+        await update.message.reply_text('Введите название привычки:')
+        return ADD_HABIT_NAME
+    else:
+        logger.error('Ошибка: Отсутствует сообщение от пользователя.')
 
 
 async def add_habit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод названия привычки."""
+    """Обрабатываем ввод названия привычки"""
     name = update.message.text
     context.user_data['name'] = name
     await update.message.reply_text('Введите место, где вы будете выполнять привычку:')
@@ -228,7 +196,7 @@ async def add_habit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод места."""
+    """Обрабатываем ввод места"""
     place = update.message.text
     context.user_data['place'] = place
     await update.message.reply_text('Введите время выполнения привычки (формат HH:MM):')
@@ -236,7 +204,7 @@ async def add_habit_place(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод времени."""
+    """Обрабатываем ввод времени"""
     time_str = update.message.text
     try:
         time = datetime.strptime(time_str, '%H:%M').time()
@@ -249,7 +217,7 @@ async def add_habit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод действия."""
+    """Обрабатываем ввод действия"""
     action = update.message.text
     context.user_data['action'] = action
     await update.message.reply_text('Является ли эта привычка приятной? (да/нет):')
@@ -257,21 +225,23 @@ async def add_habit_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_pleasant(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод о приятности привычки."""
+    """Обрабатываем ввод о приятности привычки"""
     is_pleasant = update.message.text.lower() == 'да'
     context.user_data['is_pleasant'] = is_pleasant
 
     if is_pleasant:
+        # Если приятная, то спрашиваем о связанной привычке
         await update.message.reply_text('Введите название связанной привычки (или введите "нет", если ее нет):')
         return ADD_HABIT_LINKED
     else:
+        # Если не приятная, то спрашиваем о награде
         await update.message.reply_text(
             'Введите вознаграждение за выполнение привычки (или введите "нет", если его нет):')
         return ADD_HABIT_REWARD
 
 
 async def add_habit_linked(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод о связанной привычке."""
+    """Обрабатываем ввод о связанной привычке"""
     linked_habit_name = update.message.text
     if linked_habit_name.lower() == 'нет':
         context.user_data['linked_habit'] = None
@@ -284,7 +254,7 @@ async def add_habit_linked(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод о награде."""
+    """Обрабатываем ввод о награде"""
     reward = update.message.text
     if reward.lower() == 'нет':
         context.user_data['reward'] = None
@@ -295,7 +265,7 @@ async def add_habit_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_habit_execution_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод времени выполнения."""
+    """Обрабатываем ввод времени выполнения"""
     try:
         execution_time = int(update.message.text)
         if execution_time > 120:
@@ -309,7 +279,7 @@ async def add_habit_execution_time(update: Update, context: ContextTypes.DEFAULT
 
 
 async def add_habit_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод частоты выполнения."""
+    """Обрабатываем ввод частоты выполнения"""
     try:
         frequency = int(update.message.text)
         if frequency < 1 or frequency > 7:
@@ -323,16 +293,18 @@ async def add_habit_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def add_habit_public(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод о публичности привычки."""
+    """Обрабатываем ввод о публичности привычки"""
     is_public = update.message.text.lower() == 'да'
     context.user_data['is_public'] = is_public
 
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
+    # Сохраняем привычку в базу данных
+    user_id = update.effective_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(id=user_id)
+    except ObjectDoesNotExist:
+        await update.message.reply_text('Пользователь не найден. Зарегистрируйтесь в приложении.')
         return ConversationHandler.END
 
-    # Сохраняем привычку в базу данных
     data = {
         'user': user.id,
         'name': context.user_data['name'],
@@ -360,73 +332,84 @@ async def add_habit_public(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         habit = await sync_to_async(Habit.objects.create)(**data)
         await update.message.reply_text(f'Привычка "{habit.name}" успешно добавлена!')
-        await create_habit_reminder_task(user, habit)
     except Exception as e:
         await update.message.reply_text(f'Ошибка при добавлении привычки: {e}')
+
+    # Настройка рассылки через Celery
+    schedule = {
+        'task': 'telegram_integration.tasks.send_reminder',
+        'schedule': crontab(minute=context.user_data['time'].minute, hour=context.user_data['time'].hour,
+                            day_of_week='*', day_of_month='*', month_of_year='*'),
+        'args': (
+            user.telegram_chat_id, f"Reminder to perform your habit: {habit.action} at {habit.time} in {habit.place}."),
+    }
+    celery.conf.beat_schedule.update({f'reminder-{habit.id}': schedule})
+    celery.conf.beat_schedule.apply_async()
 
     return ConversationHandler.END
 
 
+# --- Удаление привычки ---
+
 async def remove_habit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает диалог удаления привычки."""
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
-        return ConversationHandler.END
+    """Начинаем диалог удаления привычки."""
     await update.message.reply_text('Введите номер привычки, которую хотите удалить:')
     return REMOVE_HABIT_NUMBER
 
 
 async def remove_habit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод номера привычки для удаления."""
+    """Обрабатываем ввод номера привычки для удаления."""
     try:
         habit_number = int(update.message.text)
     except ValueError:
         await update.message.reply_text('Некорректный номер привычки. Введите число.')
         return REMOVE_HABIT_NUMBER
 
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
+    user_id = update.effective_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(id=user_id)
+    except ObjectDoesNotExist:
+        await update.message.reply_text('Пользователь не найден. Зарегистрируйтесь в приложении.')
         return ConversationHandler.END
 
-    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]
+    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]  # Получаем 5 активных привычек
 
     if habit_number > 0 and habit_number <= len(habits):
         habit_to_delete = habits[habit_number - 1]
         await sync_to_async(habit_to_delete.delete)()
         await update.message.reply_text(f'Привычка "{habit_to_delete.name}" удалена.')
-        await delete_reminder_task(habit_to_delete.id)
+        # Удаляем задачу Celery, связанную с этой привычкой
+        delete_reminder_task.delay(f'reminder-{habit_to_delete.id}')
     else:
         await update.message.reply_text('Неверный номер привычки.')
 
     return ConversationHandler.END
 
 
+# --- Редактирование привычки ---
+
 async def edit_habit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает диалог редактирования привычки."""
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
-        return ConversationHandler.END
+    """Начинаем диалог редактирования привычки."""
     await update.message.reply_text('Введите номер привычки, которую хотите отредактировать:')
     return EDIT_HABIT_NUMBER
 
 
 async def edit_habit_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод номера привычки для редактирования."""
+    """Обрабатываем ввод номера привычки для редактирования."""
     try:
         habit_number = int(update.message.text)
     except ValueError:
         await update.message.reply_text('Некорректный номер привычки. Введите число.')
         return EDIT_HABIT_NUMBER
 
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
+    user_id = update.effective_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(id=user_id)
+    except ObjectDoesNotExist:
+        await update.message.reply_text('Пользователь не найден. Зарегистрируйтесь в приложении.')
         return ConversationHandler.END
 
-    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]
+    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]  # Получаем 5 активных привычек
 
     if habit_number > 0 and habit_number <= len(habits):
         habit_to_edit = habits[habit_number - 1]
@@ -453,7 +436,7 @@ async def edit_habit_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_habit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор поля для редактирования."""
+    """Обрабатываем выбор поля для редактирования."""
     query = update.callback_query
     await query.answer()
     field_data = query.data.split('_')
@@ -472,20 +455,17 @@ async def edit_habit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def edit_habit_new_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод нового значения."""
+    """Обрабатываем ввод нового значения."""
     new_value = update.message.text
     field_name = context.user_data['field_name']
     habit_id = context.user_data['habit_id']
-
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
-        return ConversationHandler.END
+    user_id = update.effective_user.id
 
     try:
+        user = await sync_to_async(User.objects.get)(id=user_id)
         habit = await sync_to_async(Habit.objects.get)(id=habit_id)
     except ObjectDoesNotExist:
-        await update.message.reply_text('Привычка не найдена.')
+        await update.message.reply_text('Пользователь или привычка не найдены.')
         return ConversationHandler.END
 
     if field_name == 'name':
@@ -536,49 +516,102 @@ async def edit_habit_new_value(update: Update, context: ContextTypes.DEFAULT_TYP
     elif field_name == 'public':
         habit.is_public = new_value.lower() == 'да'
 
-    await sync_to_async(habit.save)()
+    await habit.save()
 
-    # Обновляем задачу Celery, если нужно
+    # Обновляем расписание Celery, если нужно
     if field_name in ['time', 'action', 'place']:
-        await delete_reminder_task(habit.id)
-        await create_habit_reminder_task(user, habit)
+        delete_reminder_task.delay(f'reminder-{habit.id}')
+        schedule = {
+            'task': 'telegram_integration.tasks.send_reminder',
+            'schedule': crontab(minute=habit.time.minute, hour=habit.time.hour, day_of_week='*', day_of_month='*',
+                                month_of_year='*'),
+            'args': (
+                user.telegram_chat_id,
+                f"Напоминание о том, чтобы выполнить свою привычку: {habit.action} с {habit.time} по {habit.place}."),
+        }
+
+        celery.conf.beat_schedule.update({f'reminder-{habit.id}': schedule})
+        celery.conf.beat_schedule.apply_async()
 
     await update.message.reply_text(f'Привычка "{habit.name}" успешно обновлена!')
     return ConversationHandler.END
 
 
-async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_habits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Выводит список активных привычек пользователя."""
-    user = await get_or_create_user(update, context)
-    if not user.username:
-        await update.message.reply_text(f'Сначала зарегистрируйтесь, используя команду /register.')
+    user_id = update.effective_user.id
+    try:
+        user = await sync_to_async(User.objects.get)(id=user_id)
+    except ObjectDoesNotExist:
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.reply_text('Пользователь не найден. Зарегистрируйтесь в приложении.')
+        elif update.message:
+            await update.message.reply_text('Пользователь не найден. Зарегистрируйтесь в приложении.')
         return
 
-    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]
+    habits = await sync_to_async(Habit.objects.filter)(user=user)[:5]  # Выводит максимум 5 привычек
 
     if habits:
         habit_list = '\n'.join(f"{i + 1}. {habit.name} - {habit.action}" for i, habit in enumerate(habits))
-        await update.message.reply_text(f'Ваши активные привычки:\n{habit_list}')
+
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.reply_text(f'Ваши активные привычки:\n{habit_list}')
+        elif update.message:
+            await update.message.reply_text(f'Ваши активные привычки:\n{habit_list}')
     else:
-        await update.message.reply_text('У вас нет активных привычек.')
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.reply_text('У вас нет активных привычек.')
+        elif update.message:
+            await update.message.reply_text('У вас нет активных привычек.')
 
 
-# --- Обработчик ошибок ---
+async def show_menu(update: Update, context: CallbackContext) -> None:
+    """Показать главное меню с доступными командами."""
+    keyboard = [
+        [InlineKeyboardButton("Добавить привычку", callback_data='add_habit')],
+        [InlineKeyboardButton("Список привычек", callback_data='list_habits')],
+        [InlineKeyboardButton("Удалить привычку", callback_data='remove_habit')],
+        [InlineKeyboardButton("Редактировать привычку", callback_data='edit_habit')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-async def error_handler(update: object, context: CallbackContext) -> None:
-    """Логирует ошибку и отправляет сообщение пользователю."""
+
+async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка выбора меню и вызова соответствующих функций."""
+    query = update.callback_query
+    await query.answer()
+    selected_action = query.data
+
+    if selected_action == 'add_habit':
+        await add_habit_start(update, context)
+    elif selected_action == 'list_habits':
+        await list_habits(update, context)
+    elif selected_action == 'remove_habit':
+        await remove_habit_start(update, context)
+    elif selected_action == 'edit_habit':
+        await edit_habit_start(update, context)
+
+    # После выполнения действия снова отображаем меню
+    await show_menu(update, context)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Вход в систему ошибки и отправка сообщение пользователю."""
     logger.error(f'Exception while handling update {update} caused by {context.error}')
+
+    # Вывод сообщения пользователю
     if update.effective_chat:
         try:
-            await update.effective_chat.send_message(f'Произошла ошибка. Попробуйте позже.')
+            await update.effective_chat.send_message('Произошла ошибка. Попробуйте позже.')
         except TelegramError:
-            pass
+            pass  # Не удается отправить сообщение пользователю, игнорируем
 
 
 # --- Основная функция ---
 
 def main() -> None:
-    """Запускает бота."""
+    """Запустить бота"""
     application = Application.builder().token(TOKEN).build()
 
     # --- Обработчик меню ---
@@ -586,7 +619,7 @@ def main() -> None:
 
     # --- Обработчики команд ---
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('register', register_start))
+    # application.add_handler(CommandHandler('register_chat_id', register_chat_id))
     application.add_handler(CommandHandler('add_habit', add_habit_start))
     application.add_handler(CommandHandler('list_habits', list_habits))
     application.add_handler(CommandHandler('remove_habit', remove_habit_start))
@@ -595,7 +628,7 @@ def main() -> None:
     # --- Обработчик ошибок ---
     application.add_error_handler(error_handler)
 
-    # --- Conversation handler for registration ---
+    # --- Обработчик разговора для регистрации ---
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('register', register_start)],
         states={
@@ -607,7 +640,7 @@ def main() -> None:
     )
     application.add_handler(conv_handler)
 
-    # --- Conversation handler for adding habit ---
+    # --- Обработчик разговора за добавление привычки ---
     add_habit_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('add_habit', add_habit_start)],
         states={
@@ -626,7 +659,7 @@ def main() -> None:
     )
     application.add_handler(add_habit_conv_handler)
 
-    # --- Conversation handler for removing habit ---
+    # --- Обработчик разговора для удаления привычки ---
     remove_habit_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('remove_habit', remove_habit_start)],
         states={
@@ -636,7 +669,7 @@ def main() -> None:
     )
     application.add_handler(remove_habit_conv_handler)
 
-    # --- Conversation handler for editing habit ---
+    # --- Обработчик разговора для редактирования привычки ---
     edit_habit_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('edit_habit', edit_habit_start)],
         states={
@@ -647,6 +680,9 @@ def main() -> None:
         fallbacks=[],
     )
     application.add_handler(edit_habit_conv_handler)
+
+    # --- Обработчик для эхо-сообщений ---
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
     # --- Запуск бота ---
     application.run_polling()
