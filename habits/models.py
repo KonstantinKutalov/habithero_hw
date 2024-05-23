@@ -1,5 +1,5 @@
 from django.db import models
-from telegram_integration.tasks import send_reminder
+# from telegram_integration.tasks import send_reminder
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
@@ -35,6 +35,6 @@ class Habit(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    def send_reminder(self):
-        message = f"Напоминание о выполнении своей привычки: {self.action} at {self.time} in {self.place}."
-        send_reminder.delay(self.user.telegram_chat_id, message)
+    # def send_reminder(self):
+    #     message = f"Напоминание о выполнении своей привычки: {self.action} at {self.time} in {self.place}."
+    #     send_reminder.delay(self.user.telegram_chat_id, message)

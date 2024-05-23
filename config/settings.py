@@ -10,8 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 import os
+from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
+from celery import Celery
 
 load_dotenv()
 
@@ -144,9 +146,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
 
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'django-db'
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+# CELERY_BROKER_URL = 'redis://localhost:6379/0'
+# CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+# CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -155,3 +157,31 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_TOKEN_MODEL': 'users.Token'
 }
+
+
+
+
+app = Celery('config')
+app.config_from_object('django.conf:settings', namespace='CELERY')
+app.autodiscover_tasks()
+
+
+CELERY_BEAT_SCHEDULE = {
+    'send-habit-reminders': {
+        'task': 'habits.tasks.send_habit_reminder',
+        'schedule': timedelta(minutes=1),
+    },
+}
+
+CELERY_TIMEZONE = 'UTC'
+
+
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['application/json']
+CELERY_RESULT_SERIALIZER = 'json'
+
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True

@@ -32,6 +32,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=150, unique=True)
     email = models.EmailField(unique=True)
     telegram_chat_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    is_staff = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     objects = UserManager()
 
