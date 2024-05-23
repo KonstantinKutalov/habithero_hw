@@ -1,13 +1,13 @@
-from users.models import User
 from django.db import models
 from telegram_integration.tasks import send_reminder
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
+from users.models import User
 
 
 class Habit(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     place = models.CharField(max_length=255)
     time = models.TimeField()
