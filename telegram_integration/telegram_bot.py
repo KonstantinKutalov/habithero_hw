@@ -5,8 +5,11 @@ import requests
 import json
 import logging
 from datetime import datetime
+
+import telegram
 from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, \
+    CallbackQueryHandler
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from asgiref.sync import sync_to_async
 from celery import Celery
@@ -40,6 +43,8 @@ REGISTER_USERNAME, REGISTER_EMAIL, REGISTER_PASSWORD = range(3)
 # Состояния для добавления привычки
 ADD_HABIT_NAME, ADD_HABIT_PLACE, ADD_HABIT_TIME, ADD_HABIT_ACTION, ADD_HABIT_PLEASANT, ADD_HABIT_LINKED, ADD_HABIT_REWARD, ADD_HABIT_EXECUTION_TIME, ADD_HABIT_FREQUENCY, ADD_HABIT_PUBLIC = range(
     10)
+
+PAGINATION_STATE = range(1)
 
 
 # Обработчики команд
@@ -255,12 +260,91 @@ async def edit_habit(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("Функция редактирования пока не реализована.")
 
 
+page_size = 5  # Количество привычек на странице
+
+
+# Функция для отображения списка привычек с пагинацией
+async def list_habits_with_pagination(update: Update, context: CallbackContext) -> int:
+    user = await sync_to_async(User.objects.get)(telegram_chat_id=update.message.chat_id)
+    habits = await sync_to_async(list)(Habit.objects.filter(user=user))
+
+    #  Пагинация:
+
+    total_pages = len(habits) // page_size + (len(habits) % page_size != 0)
+
+    current_page = 1
+
+    if 'current_page' in context.user_data:
+        current_page = context.user_data['current_page']
+
+    #  Отображение списка привычек для текущей страницы
+    start_index = (current_page - 1) * page_size
+    end_index = min(current_page * page_size, len(habits))
+    current_habits = habits[start_index:end_index]
+
+    response = "\n".join(
+        [f"{habit.name}: {habit.action} в {habit.place} в {habit.time}" for habit in current_habits])
+
+    if response:
+        await update.message.reply_text(
+            response + f"\nСтраница {current_page} из {total_pages}"
+        )
+    else:
+        await update.message.reply_text("У вас нет привычек.")
+
+    #  Кнопки для перехода по страницам
+    keyboard = [
+        [
+            #  Кнопка "Предыдущая страница"
+            telegram.InlineKeyboardButton(
+                "Предыдущая страница", callback_data=f"previous_{current_page}"
+            ),
+            #  Кнопка "Следующая страница"
+            telegram.InlineKeyboardButton(
+                "Следующая страница", callback_data=f"next_{current_page}"
+            ),
+        ],
+    ]
+    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+    return PAGINATION_STATE
+
+
+# Функция для обработки нажатия на кнопки пагинации
+async def paginate_habits(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    data = query.data
+    current_page = int(data.split('_')[1])
+    if data.startswith('previous'):
+        if current_page > 1:
+            current_page -= 1
+        else:
+            await query.answer(text="Это первая страница")
+    elif data.startswith('next'):
+        user = await sync_to_async(User.objects.get)(telegram_chat_id=update.message.chat_id)
+        habits = await sync_to_async(list)(Habit.objects.filter(user=user))
+        total_pages = len(habits) // page_size + (len(habits) % page_size != 0)
+        if current_page < total_pages:
+            current_page += 1
+        else:
+            await query.answer(text="Это последняя страница")
+
+    # Сохранение текущей страницы в контексте
+    context.user_data['current_page'] = current_page
+
+    # Обновление списка привычек для текущей страницы
+    await list_habits_with_pagination(update, context)
+    return PAGINATION_STATE
+
+
 # Основная функция для запуска бота
 def main() -> None:
     application = Application.builder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start), CommandHandler('register', register_start), CommandHandler('create', create_habit)],
+        entry_points=[CommandHandler('start', start), CommandHandler('register', register_start),
+                      CommandHandler('create', create_habit)],
         states={
             REGISTER_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_username)],
             REGISTER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_email)],
@@ -281,11 +365,13 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("list", list_habits))
+    #  application.add_handler(CommandHandler("list", list_habits))
     application.add_handler(CommandHandler("public", list_public_habits))
     application.add_handler(CommandHandler("delete", delete_habit))
     application.add_handler(CommandHandler("edit", edit_habit))
-
+    # Обновленный обработчик команды /list
+    application.add_handler(CommandHandler("list", list_habits_with_pagination))
+    application.add_handler(CallbackQueryHandler(paginate_habits, pattern='^previous|^next'))
     application.run_polling()
 
 

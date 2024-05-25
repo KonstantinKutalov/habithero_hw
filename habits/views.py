@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from .models import Habit
 from .serializers import HabitSerializer
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 
 from rest_framework import generics
 from .models import Habit
@@ -11,6 +12,7 @@ from .serializers import HabitSerializer
 
 class PublicHabitList(generics.ListAPIView):
     serializer_class = HabitSerializer
+    pagination_class = PageNumberPagination  # пагинация
 
     def get_queryset(self):
         return Habit.objects.filter(is_public=True)
@@ -19,6 +21,7 @@ class PublicHabitList(generics.ListAPIView):
 class HabitViewSet(viewsets.ModelViewSet):
     serializer_class = HabitSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination  # пагинация
 
     def get_queryset(self):
         print(f"User: {self.request.user}")
