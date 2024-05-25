@@ -87,3 +87,24 @@ class HabitTests(APITestCase):
         url = reverse('public-habit-list')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_validate_reward_and_linked_habit(self):
+        habit = Habit(
+            user=self.user,
+            name="Test Habit",
+            place="Home",
+            time="10:00",
+            action="Do something",
+            reward="Reward",
+            linked_habit=Habit.objects.create(
+                user=self.user,
+                name="Linked Habit",
+                place="Office",
+                time="12:00",
+                action="Do other thing",
+                is_pleasant=True
+            )
+        )
+        with self.assertRaises(ValidationError) as context:
+            habit.full_clean()
+        self.assertEqual(context.msg, ["Вы не можете установить и награду, и связанную привычку."])

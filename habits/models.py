@@ -20,16 +20,25 @@ class Habit(models.Model):
     is_public = models.BooleanField(default=False)
 
     def clean(self):
+        # Исключение одновременного выбора связанной привычки и указания вознаграждения
         if self.reward and self.linked_habit:
-            raise ValidationError(_("Вы не можете установить и награду, и связанный привычку."))
+            raise ValidationError(_("Вы не можете установить и награду, и связанную привычку."))
+
+        # Время выполнения должно быть не больше 120 секунд
         if self.execution_time > 120:
             raise ValidationError(_("Время выполнения не может превышать 120 секунд."))
-        if self.frequency > 7:
-            raise ValidationError(_("Вы не можете выполнять привычку реже, чем раз в 7 дней."))
+
+        # В связанные привычки могут попадать только привычки с признаком приятной привычки
         if self.linked_habit and not self.linked_habit.is_pleasant:
             raise ValidationError(_("Связанная привычка должна быть приятной."))
+
+        # У приятной привычки не может быть вознаграждения или связанной привычки
         if self.is_pleasant and (self.reward or self.linked_habit):
             raise ValidationError(_("Приятные привычки не могут иметь награды или связанных привычек."))
+
+        # Нельзя выполнять привычку реже, чем 1 раз в 7 дней
+        if self.frequency > 7:
+            raise ValidationError(_("Вы не можете выполнять привычку реже, чем раз в 7 дней."))
 
     def save(self, *args, **kwargs):
         self.full_clean()
