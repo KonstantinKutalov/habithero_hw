@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import  PublicHabitList, HabitViewSet
+from .views import PublicHabitList, HabitViewSet
 
 router = DefaultRouter()
 router.register(r'habits', HabitViewSet, basename='habit')

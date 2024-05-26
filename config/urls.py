@@ -16,9 +16,17 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from habits.views import PublicHabitList, HabitViewSet
+
+router = DefaultRouter()
+router.register(r'habits', HabitViewSet, basename='habit')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('habits.urls')),
     path('api/', include('users.urls')),
+    path('', include(router.urls)),
+    path('public_habits/', PublicHabitList.as_view(), name='public-habit-list'),
 ]
