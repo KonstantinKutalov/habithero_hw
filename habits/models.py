@@ -1,8 +1,4 @@
 from django.db import models
-# from telegram_integration.tasks import send_reminder
-from django.core.exceptions import ValidationError
-from django.utils.translation import gettext_lazy as _
-from django.conf import settings
 from users.models import User
 
 
@@ -19,31 +15,7 @@ class Habit(models.Model):
     execution_time = models.PositiveIntegerField()
     is_public = models.BooleanField(default=False)
 
-    def clean(self):
-        # Исключение одновременного выбора связанной привычки и указания вознаграждения
-        if self.reward and self.linked_habit:
-            raise ValidationError(_("Вы не можете установить и награду, и связанную привычку."))
-
-        # Время выполнения должно быть не больше 120 секунд
-        if self.execution_time > 120:
-            raise ValidationError(_("Время выполнения не может превышать 120 секунд."))
-
-        # В связанные привычки могут попадать только привычки с признаком приятной привычки
-        if self.linked_habit and not self.linked_habit.is_pleasant:
-            raise ValidationError(_("Связанная привычка должна быть приятной."))
-
-        # У приятной привычки не может быть вознаграждения или связанной привычки
-        if self.is_pleasant and (self.reward or self.linked_habit):
-            raise ValidationError(_("Приятные привычки не могут иметь награды или связанных привычек."))
-
-        # Нельзя выполнять привычку реже, чем 1 раз в 7 дней
-        if self.frequency > 7:
-            raise ValidationError(_("Вы не можете выполнять привычку реже, чем раз в 7 дней."))
-
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # def send_reminder(self):
-    #     message = f"Напоминание о выполнении своей привычки: {self.action} at {self.time} in {self.place}."
-    #     send_reminder.delay(self.user.telegram_chat_id, message)
