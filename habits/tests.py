@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from django.urls import reverse
 from rest_framework import status
@@ -74,6 +75,7 @@ class HabitTests(APITestCase):
         response = self.client.patch(url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(Habit.objects.get(id=self.test_habit.id).name, 'Updated Habit')
+        self.assertEqual(Habit.objects.get(id=self.test_habit.id).place, 'Work')
 
     def test_delete_habit(self):
         """Тестирование удаления привычки."""
@@ -89,22 +91,33 @@ class HabitTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_validate_reward_and_linked_habit(self):
+        print("Создаем linked_habit")
+        linked_habit = Habit.objects.create(
+            user=self.test_user,
+            name="Linked Habit",
+            place="Office",
+            time="12:00",
+            action="Do other thing",
+            is_pleasant=True,
+            execution_time=30
+        )
+        print("linked_habit создан. execution_time:", linked_habit.execution_time)
+
         habit = Habit(
-            user=self.user,
+            user=self.test_user,
             name="Test Habit",
             place="Home",
             time="10:00",
             action="Do something",
             reward="Reward",
-            linked_habit=Habit.objects.create(
-                user=self.user,
-                name="Linked Habit",
-                place="Office",
-                time="12:00",
-                action="Do other thing",
-                is_pleasant=True
-            )
+            linked_habit=linked_habit
         )
-        with self.assertRaises(ValidationError) as context:
+        print("Создаем habit")
+        try:
             habit.full_clean()
-        self.assertEqual(context.msg, ["Вы не можете установить и награду, и связанную привычку."])
+        except ValidationError as e:
+            print("Исключение ValidationError поднято:", e)
+            self.assertIn("Вы не можете установить и награду, и связанную привычку(Вывод ошибкаи в models.py).",
+                          e.message_dict['__all__'])
+        else:
+            self.fail("ValidationError не был поднят")
